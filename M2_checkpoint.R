@@ -22,7 +22,7 @@ b1 <- mutate(booking, reservation_status_date = as.Date(reservation_status_date,
              is_canceled = factor(is_canceled),
              market_segment = factor(market_segment))
 
-  b3 <- filter(booking, is_canceled == 1)
+b3 <- filter(booking, is_canceled == 1)
 b3 <- mutate(booking, reservation_status_date = as.Date(reservation_status_date, "%d/%m/%Y"),
              hotel = factor(hotel),
              is_canceled = factor(is_canceled))
@@ -205,120 +205,98 @@ pred <- predict(modelo2, newdata = datos.test)
 caret::confusionMatrix(pred, datos.test$is_canceled)
 
 
-########## SVM
-# Partición de los datos
-set.seed(1)
-df <- bforest
-nobs <- nrow(bforest)
-itrain <- sample(nobs, 0.8 * nobs)
-train <- df[itrain, ]
-test <- df[-itrain, ]
+###SVM
+#Preparar los datos
+hotel_df <- hotel_stays%>%
+  select(is_canceled, hotel, arrival_date_month, meal,
+         adr, deposit_type, lead_time, adults, required_car_parking_spaces,
+         total_of_special_requests, market_segment,
+         stays_in_week_nights, stays_in_weekend_nights)%>%
+  mutate_if(is.character,factor)
 
-#Instalar paquete
-install.packages("kernlab")
-library(kernlab)
-library(e1071)
-set.seed(1) 
+install.packages("tidymodels")
+library(tidymodels)
+set.seed(1234)
+hotel_split <- initial_split(hotel_df)
+hotel_train <- training(hotel_split)
+hotel_test <- testing(hotel_split)
 
-# Selección de sigma = mean(sigest(taste ~ ., data = train)[-2]) # depende de la semilla
-#svm4 <- ksvm(is_canceled ~ ., data = train,
-#            kernel = "rbfdot", prob.model = TRUE)
+
+hotel_rec <- recipe(is_canceled ~., data = hotel_train) %>%
+  step_dummy(all_nominal(), -all_outcomes()) %>%
+  step_zv(all_numeric())%>%
+  step_normalize(all_numeric()) %>%
+  prep()
+
+hotel_rec
+
+test_proc <-bake(hotel_rec, new_data = hotel_test)
+hotel_rec_juice <- juice(hotel_rec)
+
+
 #svm
-#summary(svm)
-
-#svm predicción
-#pred <- predict(svm, test)
-#caret::confusionMatrix(pred, test$is_canceled)
-
-#svm con variables fijas
-#svm1 <- ksvm(is_canceled ~ lead_time + deposit_type, data = train)
-#svm1
-#summary(svm1)
-
-##
-set.seed(2022)
-train = sample(nrow(bforest), 
-               round(nrow(bforest)/2))
-tail(bforest[train, ])
-
-
-best <- svm(is_canceled~.,  data = bforest[train,],
-            kernel = "radial",
-            cost = 100,
-            gamma = 1.51
+best6 <- svm(is_canceled ~ .,  data = juice(hotel_rec),
+             kernel = "radial"
 )
+best6
+summary(best6)
+str(best6)
 
-best
-summary(best)
-
-#hacer plot
-
-
-# svm con lead time y adr
-best2 <- svm(is_canceled ~ lead_time + adr,  data = train,
-            kernel = "radial",
-            cost = 100,bes
-            gamma = 1.51
-)
-
-best2
-summary(best2)
-
-names(best2)
-plot(best2, test, lead_time ~ adr)
-table(train$is_canceled, fitted(best2), dnn = c("Actual", "Predicho"))
-pred <- predict(best2, test)
+names(best6)
+plot(best6, hotel_train, lead_time ~ adr)
+table(juice(hotel_rec)$is_canceled, fitted(best6), dnn = c("Actual", "Predicho"))
+pred <- predict(best6, juice(hotel_rec))
 pred
-table(test$is_canceled, pred)
+table(juice(hotel_rec), pred)
+
+table(hotel_test$is_canceled, fitted(best6), dnn = c("Actual", "Predicho"))
 
 
-paste("Observaciones de test mal clasificadas:", 
-      100 * mean(test$is_canceled != pred) %>% 
-        round(digits = 4), "%")
+mac <- table(true = test_proc$is_canceled, 
+             pred = predict(best6, 
+                            newdata = test_proc))
+mac
 
+#accurancy
+round(sum(diag(mac))/sum(colSums(mac)), 5)
 
+rs <- apply(mac, 1, sum)
+r1 <- round(mac[1,]/rs[1], 5)
+r2 <- round(mac[2,]/rs[2], 5)
+rbind(No=r1, Yes=r2)
 
+fit.hotel <- svm(is_canceled ~ ., data = juice(hotel_rec), 
+                 kernel = "radial",
+                 decision.values = TRUE)
 
+summary(fit.hotel)
+str(fit.hotel)
 
+fitted <- attributes(predict(fit.hotel, test_proc, 
+                             decision.values = TRUE))$decision.values
 
+#eti <- ifelse(fitted < 2, "Yes", "No")
 
-#tuning
-set.seed(2)
-tune.out <- tune(svm, is_canceled ~ lead_time + adr, data = train,
-     kernel = "radial",
-     ranges = list(
-       cost = c(0.1, 1, 10, 100, 1000),
-       gama = c(0.5, 1, 2, 3, 4)
-     ))
-
-#library(caret)
-#predvals <- extractPrediction (list(pred), testx = adr, testy = lead_time)
-
-#ajustes AUN NO QUEDAN
-#mc <- table(true = bforest[-train, "bforest"], 
-            pred = predict(best2, 
-                           newdata = bforest[-train,]))
+#mc <- table(true = test_proc, 
+#          pred = eti)
 #mc
 
-# El porcentaje total de aciertos obtenido por el modelo usando el 
-# conjunto de prueba es el siguiente
-
+mc <- table(true = test_proc, 
+            pred = predict(fit.hotel, 
+                           newdata = test_proc))
+mc
 round(sum(diag(mc))/sum(colSums(mc)), 5)
-
-# Ahora observemos las siguientes proporciones
 
 rs <- apply(mc, 1, sum)
 r1 <- round(mc[1,]/rs[1], 5)
 r2 <- round(mc[2,]/rs[2], 5)
 rbind(No=r1, Yes=r2)
 
-plot(best, bforest)
-
-#set.seed(325)
-#tuning <- tune(e1071::svm, is_canceled ~ ., data = train, 
- #              kernel = "linear")
+plot(fit.hotel, test_proc, deposit_type_Refundable ~ market_segment_Direct)
 
 
+
+##REGRESIÓN LOGÍSTICA
 #regresion logistica con todas las variables
 rl <- glm(is_canceled ~., data = train)
 rl
@@ -336,3 +314,38 @@ summary(rl3)
 
 rl4 <- update(rl3, ~. +total_of_special_requests)
 summary(rl4)
+
+#te quedas con el que te de menos error
+
+
+##KKNN
+#Instalar paquetes
+install.packages("kknn")
+library(kknn)
+
+knn_spec <- nearest_neighbor()%>%
+  set_engine("kknn")%>%
+  set_mode("classification")
+
+knn_fit <- knn_spec %>%
+  fit(is_canceled~.,
+      data=juice(hotel_rec))
+
+summary(knn_fit)
+knn_fit
+
+#evaluar knn
+set.seed(1234)
+validation_splits <- mc_cv(juice(hotel_rec), prop =0.9,
+                           strata = is_canceled)
+validation_splits
+
+knn_res <- fit_resamples(
+  knn_spec,
+  is_canceled ~.,
+  validation_splits,
+  control = control_resamples(save_pred = TRUE)
+)
+
+
+
